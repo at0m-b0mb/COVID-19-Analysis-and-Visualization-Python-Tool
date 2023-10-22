@@ -6,6 +6,14 @@ The COVID-19 Analysis and Visualization Python Tool is designed to help analyze 
 
 The COVID-19 pandemic presents various challenges, including the need for accurate and timely information to inform decision-making. This tool aims to provide a solution for collecting, storing, and processing COVID-19 data from multiple sources and presenting it clearly and effectively.
 
+##Images
+![Image 1](Images/1.png)
+![Image 2](Images/2.png)
+![Image 3](Images/3.png)
+![Image 4](Images/4.png)
+![Image 5](Images/5.png)
+![Image 6](Images/6.png)
+
 ## Model and Methodology
 
 ### Data Collection
