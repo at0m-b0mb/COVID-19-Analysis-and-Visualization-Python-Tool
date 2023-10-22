@@ -1,1 +1,1 @@
-# -COVID-19-Analysis-and-Visualization-Python-Tool
+# COVID-19-Analysis-and-Visualization-Python-Tool
