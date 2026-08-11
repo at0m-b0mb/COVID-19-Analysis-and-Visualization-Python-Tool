@@ -6,7 +6,77 @@ The COVID-19 Analysis and Visualization Python Tool is designed to help analyze 
 
 The COVID-19 pandemic presents various challenges, including the need for accurate and timely information to inform decision-making. This tool aims to provide a solution for collecting, storing, and processing COVID-19 data from multiple sources and presenting it clearly and effectively.
 
-##Images
+## Web Dashboard
+
+Alongside the Python scripts, the repository now ships an interactive web dashboard over the
+same WHO dataset — 764,474,387 reported cases and 6,915,286 reported deaths across 237
+countries and areas, from 3 January 2020 to 26 April 2023.
+
+**Run it**
+
+```bash
+python3 -m http.server 8000 --directory web
+```
+
+Then open <http://localhost:8000>. The page also works by opening `web/index.html` directly
+from the file system, and can be served as-is from GitHub Pages (set Pages to the `/web`
+folder, or copy `web/` to the site root).
+
+**What is in it**
+
+| Section | What it shows |
+| --- | --- |
+| Global curve | Daily cases or deaths worldwide, with the trailing 7-day average, on a linear or logarithmic axis |
+| World map | A Robinson-projection choropleth, shaded in seven classes; hover for numbers, click to open a country |
+| Regions | Weekly totals stacked by WHO region, with a toggleable legend |
+| Wave calendar | 24 countries × 40 months, each row shaded against its own peak month, so wave *timing* is readable independently of country size |
+| Country panel | Any of the 237 countries: daily cases, daily deaths, cumulative totals and case fatality rate, each on its own axis |
+| Compare | Up to five countries on one axis, each keeping its colour as others are added or removed |
+| Table | Every country and area, sortable and filterable, with per-row sparklines and a CSV export |
+
+A period selector (All / 2020 / 2021 / 2022 / 2023), a measure selector (cases / deaths) and a
+scale selector sit in a single filter row that scopes every chart, figure and table on the page,
+so no two numbers on screen can disagree about which slice they describe.
+
+**How it is built**
+
+* **No frameworks and no charting library.** Every mark is hand-drawn SVG in
+  `web/assets/js/charts.js` (~700 lines): area and line charts with a snapping crosshair,
+  a stacked area, ranked bars, the choropleth, the heatmap and the sparklines. There is no
+  build step, no `node_modules`, and nothing is fetched from a CDN at runtime.
+* **Charts re-render on resize** rather than scaling a viewBox, so labels stay the same size
+  and tick density suits the width actually available.
+* **The colour palette is validated, not eyeballed** — the categorical slots pass lightness,
+  chroma, colour-blindness separation (protanopia and deuteranopia at full severity) and
+  contrast checks against both the light and the dark surface. Colour follows the entity:
+  cases are always blue, deaths always orange, and a WHO region keeps its hue no matter how
+  the chart is filtered.
+* **Accessible by construction.** Every chart carries an `aria-label` summary and a keyboard
+  crosshair (arrow keys, Shift for a week, Home/End); the full table is the readable twin of
+  every chart; the page is fully responsive and ships both a dark and a light theme.
+* **Data is precomputed.** `tools/build_web_data.py` reads the CSV once and emits two bundles:
+  `web/data/core.js` (~200 KB — global series, country index with per-year totals, region
+  series, wave calendar, map geometry) and `web/data/series.js` (~1.5 MB — every country's
+  daily series), which loads lazily after first paint. Whole-year totals are precomputed, so
+  the map, ranking and table answer any period preset exactly without touching the large bundle.
+
+**Regenerate the data**
+
+```bash
+python3 tools/build_web_data.py
+```
+
+Standard library only — no pandas needed. To refresh the map geometry (Natural Earth 1:110m
+outlines plus the ISO 3166 code list, both committed under `tools/geo-sources/`):
+
+```bash
+python3 tools/fetch_geo_sources.py
+```
+
+## Images
+
+Output from the Python visualisation scripts:
+
 ![Image 1](Images/1.png)
 ![Image 2](Images/2.png)
 ![Image 3](Images/3.png)
@@ -62,6 +132,13 @@ This script performs statistical analysis, including descriptive statistics, cor
 
 ### 4. Covid_Data_Analytics.py
 This script focuses on data visualization and presents various visualizations, including bar charts, line charts, and growth rate calculations.
+
+### web/
+The interactive dashboard described above — a static site with no dependencies.
+
+### tools/
+`build_web_data.py` turns the CSV into the dashboard's data bundles; `fetch_geo_sources.py`
+downloads the map sources; `geo.py` projects TopoJSON country outlines into SVG paths.
 
 ## Usage
 
