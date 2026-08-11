@@ -294,9 +294,10 @@ a { color: inherit; }
   font-size: 11.5px; font-weight: 620; letter-spacing: .1em;
   text-transform: uppercase; color: var(--muted); white-space: nowrap;
 }
-.filter-note {
-  margin-left: auto; font-size: 12.5px; color: var(--muted);
+.filter-tail {
+  margin-left: auto; display: flex; align-items: center; gap: 14px;
 }
+.filter-note { font-size: 12.5px; color: var(--muted); }
 
 .segmented {
   display: inline-flex; padding: 3px; gap: 2px;
@@ -353,10 +354,30 @@ a { color: inherit; }
   flex: 1 1 320px; min-width: 220px; font-size: 12.5px; color: var(--muted);
   line-height: 1.5;
 }
+.chart-note--block { flex: 1 1 100%; min-width: 0; margin-bottom: 10px; }
+.chart-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.chart-card--wide { grid-column: 1 / -1; }
 .chart-foot {
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
   font-size: 12.5px; color: var(--muted); line-height: 1.5;
 }
+
+/* Milestone key — the numbered rules on the global curve */
+.milestone-key {
+  list-style: none; margin: 14px 0 0; padding: 14px 0 0;
+  border-top: 1px solid var(--border);
+  display: grid; gap: 8px 24px;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+}
+.milestone { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); }
+.milestone-n {
+  flex: none; width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center; margin-top: 1px;
+  background: var(--surface-3); color: var(--text-2);
+  font-size: 10.5px; font-weight: 640; font-variant-numeric: tabular-nums;
+}
+.milestone-body { line-height: 1.45; }
+.milestone-date { color: var(--muted); margin-right: 7px; white-space: nowrap; }
 .chart { width: 100%; position: relative; }
 /* Charts are drawn at the measured pixel width rather than scaled from a
    viewBox, so the SVG must not be stretched by CSS. The map is the exception:
@@ -481,6 +502,8 @@ button.legend-item:hover { color: var(--text); }
   transition: color .15s ease, border-color .15s ease;
 }
 .btn:hover { color: var(--text); border-color: var(--border-firm); }
+.btn--sm { padding: 5px 11px; font-size: 12.5px; border-radius: 8px; }
+.btn[aria-pressed="true"] { color: var(--text); border-color: var(--border-firm); }
 
 .compare-card { padding: 20px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; min-height: 34px; }
@@ -595,6 +618,9 @@ button.legend-item:hover { color: var(--text); }
 .c-hit { fill: transparent; }
 .c-bar { shape-rendering: crispEdges; }
 .c-empty { fill: var(--muted); font-size: 13px; }
+.c-annot { stroke: var(--border-firm); stroke-width: 1; shape-rendering: crispEdges; }
+.c-annot-pin circle { fill: var(--surface); stroke: var(--border-firm); stroke-width: 1; }
+.c-annot-pin text { fill: var(--muted); font-size: 10px; font-weight: 620; }
 
 /* --------------------------------------------------------------------------
    Loading
@@ -621,8 +647,9 @@ button.legend-item:hover { color: var(--text); }
 @media (max-width: 900px) {
   html { scroll-padding-top: 118px; }
   .site-nav { display: none; }
-  .filter-note { display: none; }
+  .filter-note { display: none; }   /* the Copy link button stays */
   .chart-grid { grid-template-columns: 1fr; }
+  .milestone-key { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {

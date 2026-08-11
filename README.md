@@ -1,6 +1,22 @@
+<p align="center">
+  <img src="web/brand/banner.png" alt="COVID-19 Analysis &amp; Visualization — 764.5M reported cases, 6.9M reported deaths, 237 countries and areas, 1210 days tracked" width="100%">
+</p>
+
+<p align="center">
+  <a href="#web-dashboard"><img alt="Dashboard" src="https://img.shields.io/badge/dashboard-interactive-3987e5?style=flat-square"></a>
+  <img alt="Dependencies" src="https://img.shields.io/badge/runtime%20dependencies-none-1baf7a?style=flat-square">
+  <img alt="Data" src="https://img.shields.io/badge/data-WHO%20global-0d366b?style=flat-square">
+  <img alt="Coverage" src="https://img.shields.io/badge/2020--2023-1210%20days-4a3aa7?style=flat-square">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-52514e?style=flat-square"></a>
+</p>
+
 # COVID-19 Analysis and Visualization Python Tool
 
 The COVID-19 Analysis and Visualization Python Tool is designed to help analyze and visualize COVID-19 data. This tool is valuable for researchers, policymakers, and the public to better understand the spread of the virus, its impact on different populations, and the effectiveness of prevention and treatment strategies.
+
+> **The logo is the data.** The curve in the mark and the banner is the real global
+> epidemic curve, traced straight out of the dashboard's own data bundle by
+> `tools/make_brand.py`. Regenerate the data and the branding follows.
 
 ## Project Overview
 
@@ -38,6 +54,22 @@ A period selector (All / 2020 / 2021 / 2022 / 2023), a measure selector (cases /
 scale selector sit in a single filter row that scopes every chart, figure and table on the page,
 so no two numbers on screen can disagree about which slice they describe.
 
+**Also in the dashboard**
+
+* **Milestones.** Seven documented dates — the WHO's emergency declaration, the pandemic
+  characterisation, the first vaccination outside a trial, the Alpha/Delta/Omicron
+  designations, and China unwinding zero-COVID — drawn as numbered rules on the global
+  curve with a key underneath. Toggleable.
+* **Shareable views.** The full state of the page lives in the URL, so *Copy link* hands
+  someone the exact period, measure, scale, country and comparison you are looking at.
+* **Align by outbreak age.** The comparison chart can put day 0 at each country's 100th
+  case instead of on a shared calendar, which lines the waves up by outbreak age.
+* **Week-on-week change.** A diverging chart per country: above the line the outbreak was
+  accelerating, below it, receding. This is the growth-rate analysis from
+  `4. Covid_Data_Analytics.py`, made continuous.
+* **Download SVG.** Any of the big charts can be exported as a standalone SVG with its
+  colours inlined.
+
 **How it is built**
 
 * **No frameworks and no charting library.** Every mark is hand-drawn SVG in
@@ -72,6 +104,25 @@ outlines plus the ISO 3166 code list, both committed under `tools/geo-sources/`)
 ```bash
 python3 tools/fetch_geo_sources.py
 ```
+
+**Brand assets**
+
+`web/brand/` holds the mark, the horizontal logo, this banner, a social card and a favicon,
+as both SVG and PNG. They are generated, not drawn by hand:
+
+```bash
+python3 tools/make_brand.py
+```
+
+<p align="center">
+  <img src="web/brand/logo.png" alt="COVID-19 Dashboard logo" width="380">
+</p>
+
+The curve in every asset is the global 7-day average from `web/data/core.js`, downsampled
+with peak-preserving buckets and drawn on a square-root scale — on a linear scale the
+December 2022 spike is so much taller than everything else that the first two years flatten
+into a line. The dashboard itself never rescales like that; this is the one place the shape
+is styled rather than measured.
 
 ## Images
 
@@ -138,7 +189,8 @@ The interactive dashboard described above — a static site with no dependencies
 
 ### tools/
 `build_web_data.py` turns the CSV into the dashboard's data bundles; `fetch_geo_sources.py`
-downloads the map sources; `geo.py` projects TopoJSON country outlines into SVG paths.
+downloads the map sources; `geo.py` projects TopoJSON country outlines into SVG paths;
+`make_brand.py` generates the brand assets from the global curve.
 
 ## Usage
 

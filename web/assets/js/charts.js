@@ -345,6 +345,47 @@
     return xOf;
   }
 
+  /* Plain numeric x-axis, for series aligned on "days since" rather than dates. */
+  function drawIndexAxis(svg, plot, count, unitLabel) {
+    var xOf = function (index) {
+      return plot.left + (count > 1 ? (index / (count - 1)) * (plot.right - plot.left) : 0);
+    };
+    niceTicks(0, count - 1, Math.max(2, Math.floor((plot.right - plot.left) / 90)))
+      .forEach(function (value) {
+        if (value > count - 1) return;
+        text(el("text", {
+          x: xOf(value), y: plot.bottom + 18, "text-anchor": "middle", "class": "c-tick"
+        }, svg), Fmt.comma(value));
+      });
+    text(el("text", {
+      x: (plot.left + plot.right) / 2, y: plot.bottom + 34,
+      "text-anchor": "middle", "class": "c-tick"
+    }, svg), unitLabel);
+    return xOf;
+  }
+
+  /* Milestone rules. Drawn before the data so they sit behind it, and keyed by
+     a number rather than inline text — labels on a dense time axis collide. */
+  function drawAnnotations(svg, plot, xOf, count, annotations) {
+    var lastBadge = -Infinity;
+    annotations.forEach(function (note) {
+      if (note.index < 0 || note.index >= count) return;
+      var x = xOf(note.index);
+      el("line", {
+        x1: x, x2: x, y1: plot.top + 10, y2: plot.bottom, "class": "c-annot"
+      }, svg);
+      // Two milestones ten days apart put their badges on top of each other.
+      // The rule stays on the true date; only the badge slides clear.
+      var badgeX = Math.max(x, lastBadge + 18);
+      lastBadge = badgeX;
+      var group = el("g", { "class": "c-annot-pin" }, svg);
+      el("circle", { cx: badgeX, cy: plot.top + 1, r: 8 }, group);
+      text(el("text", { x: badgeX, y: plot.top + 5, "text-anchor": "middle" }, group),
+        String(note.n));
+      text(el("title", null, group), note.label);
+    });
+  }
+
   function emptyState(container, width, height, message) {
     var svg = el("svg", { width: width, height: height }, container);
     text(el("text", {
@@ -395,8 +436,9 @@
 
       var svg = el("svg", { width: width, height: height }, node);
       var y = makeY({ scale: config.scale, max: peak, top: plot.top, bottom: plot.bottom });
-      drawFrame(svg, plot, y, Fmt.compact);
+      drawFrame(svg, plot, y, config.formatValue || Fmt.compact);
       var xOf = drawTimeAxis(svg, plot, config.startMs, count, width);
+      if (config.annotations) drawAnnotations(svg, plot, xOf, count, config.annotations);
 
       var color = token(config.color || "--series-1");
       var baseline = y.of(config.scale === "log" ? LOG_FLOOR : 0);
@@ -465,12 +507,18 @@
           dot.setAttribute("cy", y.of(marker));
           dot.setAttribute("opacity", 1);
 
-          var rows = [{ color: color, label: config.label, value: Fmt.comma(values[index]) }];
+          var format = config.formatTooltip || Fmt.comma;
+          var rows = [{ color: color, label: config.label, value: format(values[index]) }];
           if (average && average[index] != null) {
-            rows.push({ color: color, label: config.averageLabel || "7-day average", value: Fmt.comma(average[index]) });
+            rows.push({ color: color, label: config.averageLabel || "7-day average", value: format(average[index]) });
           }
+          // Surface a milestone when the crosshair is near its rule.
+          var note = config.note;
+          (config.annotations || []).forEach(function (item) {
+            if (Math.abs(item.index - index) <= 3) note = item.label;
+          });
           tooltip.show(clientX, clientY,
-            Fmt.longDate(config.startMs + index * Fmt.DAY_MS), rows, config.note);
+            Fmt.longDate(config.startMs + index * Fmt.DAY_MS), rows, note);
         },
         onLeave: function () {
           crosshair.setAttribute("opacity", 0);
@@ -506,10 +554,15 @@
       if (!count) return emptyState(node, width, height, "No data in this period");
       if (peak <= 0) peak = 1;
 
+      var byIndex = config.xMode === "index";
+      if (byIndex) plot.bottom -= 16;   // room for the axis caption
+
       var svg = el("svg", { width: width, height: height }, node);
       var y = makeY({ scale: config.scale, max: peak, top: plot.top, bottom: plot.bottom });
       drawFrame(svg, plot, y, Fmt.compact);
-      var xOf = drawTimeAxis(svg, plot, config.startMs, count, width);
+      var xOf = byIndex
+        ? drawIndexAxis(svg, plot, count, config.xLabel || "days")
+        : drawTimeAxis(svg, plot, config.startMs, count, width);
 
       var surface = token("--surface");
 
@@ -589,7 +642,10 @@
           }).sort(function (a, b) { return b.sort - a.sort; });
 
           tooltip.show(clientX, clientY,
-            Fmt.longDate(config.startMs + index * Fmt.DAY_MS), rows, config.note);
+            byIndex
+              ? (config.xLabel || "Day") + " " + Fmt.comma(index)
+              : Fmt.longDate(config.startMs + index * Fmt.DAY_MS),
+            rows, config.note);
         },
         onLeave: function () {
           crosshair.setAttribute("opacity", 0);
@@ -683,6 +739,106 @@
 
           tooltip.show(clientX, clientY,
             config.labelAt ? config.labelAt(index) : String(index), rows, config.note);
+        },
+        onLeave: function () { crosshair.setAttribute("opacity", 0); }
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Diverging area — a rate that can sit either side of a baseline
+   * ---------------------------------------------------------------------- */
+
+  function divergingArea(container, config) {
+    mount(container, function (node, width) {
+      var height = config.height || 260;
+      var plot = { left: 56, right: width - 14, top: 12, bottom: height - 30 };
+      if (plot.right <= plot.left) return;
+
+      var values = config.values;
+      var count = values.length;
+      if (!count) return emptyState(node, width, height, "No data in this period");
+
+      // Symmetric around zero, so "up" and "down" are the same distance for the
+      // same magnitude — the whole point of a diverging encoding.
+      var limit = 0;
+      values.forEach(function (value) {
+        if (value != null && Math.abs(value) > limit) limit = Math.abs(value);
+      });
+      limit = Math.min(limit, config.clamp || Infinity) || 1;
+
+      var svg = el("svg", { width: width, height: height }, node);
+      var span = plot.bottom - plot.top;
+      var yOf = function (value) {
+        var clamped = Math.max(-limit, Math.min(limit, value));
+        return plot.top + span / 2 - (clamped / limit) * (span / 2);
+      };
+
+      niceTicks(-limit, limit, 4).forEach(function (value) {
+        var position = yOf(value);
+        el("line", {
+          x1: plot.left, x2: plot.right, y1: position, y2: position, "class": "c-grid"
+        }, svg);
+        text(el("text", {
+          x: plot.left - 8, y: position + 4, "text-anchor": "end", "class": "c-tick"
+        }, svg), (value > 0 ? "+" : "") + Math.round(value) + "%");
+      });
+
+      var xOf = drawTimeAxis(svg, plot, config.startMs, count, width);
+      var zero = yOf(0);
+      el("line", { x1: plot.left, x2: plot.right, y1: zero, y2: zero, "class": "c-axis" }, svg);
+
+      // Two arms of the diverging pair, clipped at the zero line.
+      ["up", "down"].forEach(function (side) {
+        var clipId = "clip-" + side + "-" + Math.random().toString(36).slice(2, 8);
+        var clip = el("clipPath", { id: clipId }, svg);
+        el("rect", {
+          x: plot.left, y: side === "up" ? plot.top : zero,
+          width: plot.right - plot.left,
+          height: Math.max(0, side === "up" ? zero - plot.top : plot.bottom - zero)
+        }, clip);
+
+        var parts = ["M" + round(xOf(0)) + " " + round(zero)];
+        for (var index = 0; index < count; index++) {
+          parts.push("L" + round(xOf(index)) + " " + round(yOf(values[index] == null ? 0 : values[index])));
+        }
+        parts.push("L" + round(xOf(count - 1)) + " " + round(zero) + "Z");
+
+        var color = token(side === "up" ? (config.upColor || "--series-8")
+                                        : (config.downColor || "--series-1"));
+        el("path", {
+          d: parts.join(""), fill: color, "fill-opacity": 0.24,
+          "clip-path": "url(#" + clipId + ")"
+        }, svg);
+        el("path", {
+          d: parts.join(""), fill: "none", stroke: color, "stroke-width": 2,
+          "stroke-linejoin": "round", "clip-path": "url(#" + clipId + ")"
+        }, svg);
+      });
+
+      var crosshair = el("line", {
+        x1: 0, x2: 0, y1: plot.top, y2: plot.bottom, "class": "c-crosshair", opacity: 0
+      }, svg);
+
+      container.setAttribute("aria-label", config.ariaLabel ||
+        "Week-on-week change, above and below zero.");
+
+      bindCrosshair({
+        container: container, svg: svg, plot: plot, count: count,
+        onIndex: function (index, clientX, clientY) {
+          var x = xOf(index);
+          crosshair.setAttribute("x1", x);
+          crosshair.setAttribute("x2", x);
+          crosshair.setAttribute("opacity", 1);
+          var value = values[index];
+          tooltip.show(clientX, clientY,
+            Fmt.longDate(config.startMs + index * Fmt.DAY_MS),
+            [{
+              color: token(value > 0 ? (config.upColor || "--series-8")
+                                     : (config.downColor || "--series-1")),
+              label: config.label || "Change vs previous week",
+              value: value == null ? "—" : (value > 0 ? "+" : "") + value.toFixed(1) + "%"
+            }], config.note);
         },
         onLeave: function () { crosshair.setAttribute("opacity", 0); }
       });
@@ -974,10 +1130,67 @@
     return svg;
   }
 
+  /* ---------------------------------------------------------------------- *
+   * Export — hand the reader the SVG they are looking at
+   * ---------------------------------------------------------------------- */
+
+  /* The chart's colours live in the page's stylesheet, so a bare serialisation
+     downloads a black-on-black file. Resolve the tokens and inline them. */
+  var EXPORT_TOKENS = [
+    "--surface", "--grid", "--axis", "--muted", "--text-2", "--border-firm"
+  ];
+
+  function exportSvg(container, filename) {
+    var source = container.querySelector("svg");
+    if (!source) return;
+    var copy = source.cloneNode(true);
+    copy.setAttribute("xmlns", NS);
+
+    var computed = getComputedStyle(document.documentElement);
+    var vars = EXPORT_TOKENS.map(function (name) {
+      return name + ":" + computed.getPropertyValue(name).trim() + ";";
+    }).join("");
+
+    var style = document.createElementNS(NS, "style");
+    style.textContent =
+      "svg{" + vars + "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}" +
+      ".c-grid{stroke:var(--grid);stroke-width:1;}" +
+      ".c-axis{stroke:var(--axis);stroke-width:1;}" +
+      ".c-tick{fill:var(--muted);font-size:11px;}" +
+      ".c-label{fill:var(--text-2);font-size:12px;}" +
+      ".c-endlabel{fill:var(--text-2);font-size:12px;font-weight:580;}" +
+      ".c-annot{stroke:var(--border-firm);stroke-width:1;}" +
+      ".c-annot-pin circle{fill:var(--surface);stroke:var(--border-firm);}" +
+      ".c-annot-pin text{fill:var(--muted);font-size:10px;}" +
+      ".c-crosshair,.c-hit{display:none;}";
+    copy.insertBefore(style, copy.firstChild);
+
+    // Paint the surface in, so the file is not transparent on a white page.
+    var background = document.createElementNS(NS, "rect");
+    background.setAttribute("width", copy.getAttribute("width") || "100%");
+    background.setAttribute("height", copy.getAttribute("height") || "100%");
+    background.setAttribute("fill", computed.getPropertyValue("--surface").trim());
+    copy.insertBefore(background, style.nextSibling);
+
+    var blob = new Blob(
+      ['<?xml version="1.0" encoding="UTF-8"?>\n', new XMLSerializer().serializeToString(copy)],
+      { type: "image/svg+xml;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = filename + ".svg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   global.Charts = {
     timeSeries: timeSeries,
     multiLine: multiLine,
     stackedArea: stackedArea,
+    divergingArea: divergingArea,
+    exportSvg: exportSvg,
     barsH: barsH,
     choropleth: choropleth,
     heatmap: heatmap,

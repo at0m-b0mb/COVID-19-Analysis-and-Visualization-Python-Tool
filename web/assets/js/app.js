@@ -31,12 +31,27 @@
   var SERIES_SLOTS = ["--series-1", "--series-2", "--series-3", "--series-4", "--series-5"];
   var MAX_COMPARE = SERIES_SLOTS.length;
 
+  /* Documented WHO and public-health milestones that fall inside this file's
+     window. Dates only — the chart shows what was reported, and these say what
+     was happening when it was reported. */
+  var MILESTONES = [
+    ["2020-01-30", "WHO declares a Public Health Emergency of International Concern"],
+    ["2020-03-11", "WHO characterises COVID-19 as a pandemic"],
+    ["2020-12-08", "First COVID-19 vaccination outside a trial (United Kingdom)"],
+    ["2020-12-18", "Alpha designated a variant of concern"],
+    ["2021-05-11", "Delta designated a variant of concern"],
+    ["2021-11-26", "Omicron designated a variant of concern"],
+    ["2022-12-07", "China begins unwinding its zero-COVID restrictions"]
+  ];
+
   var state = {
     range: "all",
     metric: "cases",
     scale: "linear",
     country: "IN",
     compare: ["US", "IN", "BR", "GB"],
+    align: false,
+    milestones: true,
     sort: { key: "cases", dir: "desc" },
     tableQuery: "",
     seriesReady: false
@@ -125,6 +140,47 @@
     });
     cache[code] = record;
     return record;
+  }
+
+  /* Milestones that fall inside the selected period, numbered in order. */
+  function milestonesInPeriod() {
+    if (!state.milestones) return [];
+    var span = periodRange();
+    var out = [];
+    MILESTONES.forEach(function (entry) {
+      var offset = Math.round((Fmt.parseISO(entry[0]) - START_MS) / Fmt.DAY_MS);
+      if (offset < span[0] || offset > span[1]) return;
+      out.push({
+        index: offset - span[0],
+        n: out.length + 1,
+        date: entry[0],
+        label: Fmt.longDate(Fmt.parseISO(entry[0])) + " — " + entry[1],
+        text: entry[1]
+      });
+    });
+    return out;
+  }
+
+  /* Week-on-week change in the trailing average, as a percentage. This is the
+     growth-rate view the Python analytics script computes, made continuous. */
+  function weeklyChange(average) {
+    return average.map(function (value, index) {
+      var previous = index >= 7 ? average[index - 7] : null;
+      if (value == null || previous == null || previous < 1) return null;
+      return ((value - previous) / previous) * 100;
+    });
+  }
+
+  /* Realign a series so day 0 is the day it crossed `threshold` cumulative
+     cases. Countries that never got there drop out. */
+  function alignedFrom(record, key, threshold) {
+    var cumulativeCases = record.cumCases;
+    var start = -1;
+    for (var index = 0; index < cumulativeCases.length; index++) {
+      if (cumulativeCases[index] >= threshold) { start = index; break; }
+    }
+    if (start < 0) return null;
+    return record[key].slice(start);
   }
 
   function peakOf(values) {
@@ -266,6 +322,7 @@
       unit.noun + " per day worldwide · " + periodLabel() +
       (state.scale === "log" ? " · log scale" : "");
 
+    var marks = milestonesInPeriod();
     Charts.timeSeries(document.getElementById("chart-curve"), {
       startMs: periodStartMs(),
       values: values,
@@ -273,10 +330,33 @@
       label: unit.daily,
       color: unit.color,
       scale: state.scale,
-      height: 340
+      height: 340,
+      annotations: marks
     });
 
+    renderMilestoneKey(marks);
     renderCallouts(values, average, unit);
+  }
+
+  function renderMilestoneKey(marks) {
+    var host = document.getElementById("milestone-key");
+    host.innerHTML = "";
+    if (!marks.length) {
+      host.appendChild(make("p", "chart-note",
+        state.milestones ? "No milestones fall inside this period."
+                         : "Milestones are hidden."));
+      return;
+    }
+    marks.forEach(function (mark) {
+      var item = make("li", "milestone");
+      item.appendChild(make("span", "milestone-n", String(mark.n)));
+      var body = make("span", "milestone-body");
+      body.appendChild(make("span", "milestone-date",
+        Fmt.longDate(Fmt.parseISO(mark.date))));
+      body.appendChild(document.createTextNode(mark.text));
+      item.appendChild(body);
+      host.appendChild(item);
+    });
   }
 
   /* Callouts are read out of the selected slice, never written by hand. */
@@ -558,6 +638,7 @@
     input.value = byCode[code].n;
     renderCountry();
     markActiveRow();
+    writeState();
     var mapHost = document.getElementById("chart-map");
     if (mapHost.__setActive) mapHost.__setActive(code);
     document.getElementById("country").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -638,7 +719,22 @@
     Charts.timeSeries(document.getElementById("chart-cd-cfr"), {
       startMs: startMs, values: cfr.map(function (value) { return value == null ? 0 : value; }),
       label: "CFR (%)", color: CFR_COLOR, height: 260, markPeak: false,
+      formatValue: function (value) { return value.toFixed(1) + "%"; },
+      formatTooltip: function (value) { return value.toFixed(2) + "%"; },
       note: "Cumulative deaths ÷ cumulative cases, from the first 500 cases."
+    });
+
+    document.getElementById("cd-growth-title").textContent =
+      "Week-on-week change in " + unit.label + " · " + country.n;
+    Charts.divergingArea(document.getElementById("chart-cd-growth"), {
+      startMs: startMs,
+      values: slice(weeklyChange(record[unit.key === "cases" ? "casesAvg" : "deathsAvg"])),
+      label: "Change vs the week before",
+      // Growth is the "bad" direction here, so it takes the warm arm of the
+      // diverging pair and decline takes the cool one.
+      upColor: "--series-8", downColor: "--series-1",
+      clamp: 200, height: 260,
+      note: "Capped at ±200% so one restated week cannot flatten the rest."
     });
   }
 
@@ -677,13 +773,21 @@
     var legend = document.getElementById("compare-legend");
     legend.innerHTML = "";
 
+    var averageKey = unit.key === "cases" ? "casesAvg" : "deathsAvg";
     var series = state.compare.map(function (code, position) {
       var record = countrySeries(code);
       if (!record) return null;
+      // Aligned mode ignores the period filter on purpose: an outbreak's own
+      // clock starts when it starts, and clipping it to a calendar year would
+      // silently compare a country's week 3 with another's week 60.
+      var values = state.align
+        ? alignedFrom(record, averageKey, 100)
+        : slice(record[averageKey]);
+      if (!values) return null;
       var item = {
         name: byCode[code].n,
         color: SERIES_SLOTS[position],
-        values: slice(record[unit.key === "cases" ? "casesAvg" : "deathsAvg"])
+        values: values
       };
       var entry = make("span", "legend-item");
       var key = make("span", "legend-key");
@@ -695,15 +799,24 @@
     }).filter(Boolean);
 
     document.getElementById("compare-title").textContent =
-      "7-day average of new " + unit.label + " · " + periodLabel() +
+      "7-day average of new " + unit.label +
+      (state.align ? " · aligned on each country's 100th case"
+                   : " · " + periodLabel()) +
       (state.scale === "log" ? " · log scale" : "");
+
+    document.getElementById("compare-note").textContent = state.align
+      ? "Day 0 is the day each country passed 100 cumulative cases, so the waves line up by outbreak age rather than by date. The period filter does not apply in this view."
+      : "Trailing 7-day average on shared calendar dates.";
 
     Charts.multiLine(document.getElementById("chart-compare"), {
       startMs: periodStartMs(),
       series: series,
       scale: state.scale,
       height: 380,
-      ariaSuffix: "Trailing 7-day average of new " + unit.label + " in " + periodLabel() + "."
+      xMode: state.align ? "index" : "time",
+      xLabel: "days since the 100th case",
+      ariaSuffix: "Trailing 7-day average of new " + unit.label +
+        (state.align ? ", aligned on each country's 100th case." : " in " + periodLabel() + ".")
     });
   }
 
@@ -872,6 +985,7 @@
     renderCountry();
     renderCompare();
     renderTable();
+    writeState();
   }
 
   /* ---------------------------------------------------------------------- *
@@ -908,7 +1022,22 @@
       renderCurve();
       renderCountry();
       renderCompare();
+      writeState();
     });
+
+    segmented(document.getElementById("align-control"), [
+      { label: "By date", value: "date" },
+      { label: "By outbreak age", value: "align" }
+    ], state.align ? "align" : "date", function (value) {
+      state.align = value === "align";
+      buildControls();
+      renderCompare();
+      writeState();
+    });
+
+    var milestoneToggle = document.getElementById("milestone-toggle");
+    milestoneToggle.setAttribute("aria-pressed", String(state.milestones));
+    milestoneToggle.textContent = state.milestones ? "Hide milestones" : "Show milestones";
   }
 
   function buildCountryList() {
@@ -972,6 +1101,22 @@
     });
 
     document.getElementById("download-csv").addEventListener("click", downloadCsv);
+    document.getElementById("copy-link").addEventListener("click", copyLink);
+
+    document.getElementById("milestone-toggle").addEventListener("click", function () {
+      state.milestones = !state.milestones;
+      buildControls();
+      renderCurve();
+      writeState();
+    });
+
+    // Every chart card can hand over the SVG the reader is looking at.
+    document.querySelectorAll("[data-export]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var target = document.getElementById(button.dataset.export);
+        if (target) Charts.exportSvg(target, button.dataset.export + "-" + state.range);
+      });
+    });
 
     document.querySelectorAll("#data-table thead button").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -1008,6 +1153,61 @@
     global.addEventListener("scroll", function () { Charts.tooltip.hide(); }, { passive: true });
   }
 
+  /* ---------------------------------------------------------------------- *
+   * Shareable state — the view lives in the URL hash
+   * ---------------------------------------------------------------------- */
+
+  function writeState() {
+    var parts = [
+      "range=" + state.range,
+      "metric=" + state.metric,
+      "scale=" + state.scale,
+      "country=" + state.country,
+      "compare=" + state.compare.join(",")
+    ];
+    if (state.align) parts.push("align=1");
+    if (!state.milestones) parts.push("marks=0");
+    // replaceState, not a hash assignment: this should not add history entries
+    // or jump the page to an element that happens to match.
+    history.replaceState(null, "", "#" + parts.join("&"));
+  }
+
+  function readState() {
+    var hash = location.hash.replace(/^#/, "");
+    if (!hash || hash.indexOf("=") < 0) return;
+    var found = {};
+    hash.split("&").forEach(function (pair) {
+      var split = pair.indexOf("=");
+      if (split > 0) found[pair.slice(0, split)] = decodeURIComponent(pair.slice(split + 1));
+    });
+
+    if (found.range === "all" || META.years.indexOf(found.range) >= 0) state.range = found.range;
+    if (MEASURES[found.metric]) state.metric = found.metric;
+    if (found.scale === "log" || found.scale === "linear") state.scale = found.scale;
+    if (found.country && byCode[found.country]) state.country = found.country;
+    if (found.compare != null) {
+      var codes = found.compare.split(",").filter(function (code) { return byCode[code]; });
+      state.compare = codes.slice(0, MAX_COMPARE);
+    }
+    state.align = found.align === "1";
+    state.milestones = found.marks !== "0";
+  }
+
+  function copyLink() {
+    var button = document.getElementById("copy-link");
+    var done = function (message) {
+      button.textContent = message;
+      setTimeout(function () { button.textContent = "Copy link"; }, 1800);
+    };
+    var url = location.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () { done("Copied"); },
+                                             function () { done("Press ⌘C"); });
+    } else {
+      done("Press ⌘C");
+    }
+  }
+
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     document.getElementById("theme-toggle").setAttribute("aria-pressed", String(theme === "light"));
@@ -1040,8 +1240,9 @@
     applyTheme(stored || (global.matchMedia &&
       global.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
 
-    if (!byCode[state.country]) state.country = DATA.countries[0].c;
     state.compare = state.compare.filter(function (code) { return byCode[code]; });
+    readState();
+    if (!byCode[state.country]) state.country = DATA.countries[0].c;
 
     renderHero();
     buildControls();
@@ -1057,6 +1258,7 @@
     renderWaves();
     renderCompare();
     renderTable();
+    writeState();
 
     requestAnimationFrame(loadSeries);
   }
